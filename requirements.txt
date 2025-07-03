@@ -1,0 +1,44 @@
+# Core ML/DL Framework
+torch==2.1.2
+torchvision==0.16.2
+pytorch-lightning==1.9.4
+xformers==0.0.28.post1
+triton==2.1.0
+
+# Hugging Face Ecosystem
+transformers==4.37.2
+accelerate==0.21.0
+datasets==3.1.0
+huggingface-hub==0.33.1
+safetensors==0.5.3
+tokenizers==0.15.1
+peft==0.13.2
+
+# Image Compression & Processing
+compressai==1.2.8
+Pillow==10.4.0
+opencv-python==4.11.0.86
+scikit-image==0.21.0
+imageio==2.35.1
+pytorch-msssim==1.0.0
+lpips==0.1.4
+
+# Data Science & Utilities
+numpy==1.24.4
+scipy==1.10.1
+pandas==2.0.3
+scikit-learn==1.2.2
+tqdm==4.67.1
+matplotlib==3.7.5
+
+# Model & Config
+timm==0.6.13
+einops==0.6.1
+omegaconf==2.3.0
+yacs==0.1.8
+fvcore==0.1.5.post20221221
+iopath==0.1.10
+
+# UI & Others
+gradio==4.16.0
+sentencepiece==0.1.99
