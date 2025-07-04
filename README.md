@@ -101,15 +101,16 @@ python evaluate.py \
 
 ## Pre-trained Models
 
-Download links and instructions for pre-trained models are provided below.
+The pre-trained models are hosted on Hugging Face Hub. Please download the following files and place them in the `checkpoints/` directory.
 
-| Model                | Location                                            |
-| -------------------- | --------------------------------------------------- |
-| Segmentation Model   | `checkpoints/best_deeplabv3plus_resnet101_voc_os16.pth` |
-| Decoder Model        | `checkpoints/final.ckpt`                            |
+- **Segmentation Model (`best_deeplabv3plus_resnet101_voc_os16.pth`)**: 
+  - [**Download from Hugging Face**](https://huggingface.co/suqinghua/Semantic_Compression_model/resolve/main/best_deeplabv3plus_resnet101_voc_os16.pth)
+- **Main Model (`final.ckpt`)**:
+  - [**Download from Hugging Face**](https://huggingface.co/suqinghua/Semantic_Compression_model/resolve/main/final.ckpt)
+
 
 > [!IMPORTANT]
-> The pre-trained models listed above are compatible with the Stable Diffusion 1.5 base model. If you wish to use a different version of Stable Diffusion, you may need to retrain the decoder.
+> The main model (`final.ckpt`) is compatible with the Stable Diffusion 1.5 base model. If you wish to use a different version of Stable Diffusion, you may need to retrain the model.
 
 ## Acknowledgements
 
