@@ -32,6 +32,10 @@ if LDM_PATH not in sys.path:
 from model.creat_model import create_model, load_state_dict
 from model.ddim_hacked import DDIMSampler
 from model.hack import enable_sliced_attention # For memory saving
+from segmentation_preprocessing import (
+    preprocess_semantic_mask,
+    restore_generated_image,
+)
 
 
 def setup_ddp(rank, world_size, port="12355"):
@@ -55,10 +59,9 @@ def seed_everything(seed, rank=0):
 
 def preprocess_segmentation_map(image_path, target_canvas_resolution):
     """
-    Loads and preprocesses a segmentation map.
-    The long edge of the image is scaled to target_canvas_resolution, and the short edge is scaled proportionally.
-    The content is then centered on a target_canvas_resolution x target_canvas_resolution canvas.
-    Returns the canvas tensor, crop box coordinates, and content dimensions.
+    Loads a discrete segmentation map and stretches it to the training size.
+    Nearest-neighbor interpolation preserves its finite category/color set.
+    Returns the control tensor, full-canvas crop box, and original dimensions.
     """
     try:
         pil_image = Image.open(image_path).convert('RGB')
@@ -70,57 +73,17 @@ def preprocess_segmentation_map(image_path, target_canvas_resolution):
     if original_w == 0 or original_h == 0:
         raise ValueError(f"Original image dimensions ({original_w}x{original_h}) cannot be zero.")
 
-    # Determine the scaled content dimensions (content_w, content_h)
-    if original_w > original_h:
-        content_w = target_canvas_resolution
-        scale = target_canvas_resolution / original_w
-        content_h = int(round(original_h * scale))
-    else:
-        content_h = target_canvas_resolution
-        scale = target_canvas_resolution / original_h
-        content_w = int(round(original_w * scale))
-    
-    content_w = max(1, content_w) # Ensure dimensions are at least 1
-    content_h = max(1, content_h)
-
     img_np = np.array(pil_image).astype(np.uint8)
-
-    import cv2
-    # Resize the original image content to content_w, content_h
-    # cv2.resize's dsize parameter is (width, height)
-    resized_content_np = cv2.resize(
-        img_np,
-        (content_w, content_h),
-        interpolation=cv2.INTER_AREA if scale < 1.0 else cv2.INTER_LANCZOS4 # Use INTER_AREA for shrinking, LANCZOS4 for enlarging
+    _, control_tensor = preprocess_semantic_mask(
+        img_np, target_canvas_resolution
     )
-
-    # Create a square canvas of target_canvas_resolution x target_canvas_resolution
-    canvas_np = np.zeros((target_canvas_resolution, target_canvas_resolution, 3), dtype=np.uint8)
-    
-    # Calculate padding to center the content
-    pad_x = (target_canvas_resolution - content_w) // 2
-    pad_y = (target_canvas_resolution - content_h) // 2
-
-    # Paste the scaled content onto the center of the canvas
-    # Determine the actual end coordinates for pasting to ensure content is within the canvas
-    paste_end_y = pad_y + content_h
-    paste_end_x = pad_x + content_w
-    
-    canvas_np[pad_y:paste_end_y, pad_x:paste_end_x, :] = resized_content_np
-    
-    # Normalize and convert to tensor
-    normalized_canvas = (canvas_np.astype(np.float32) / 127.5) - 1.0
-    control_tensor = torch.from_numpy(normalized_canvas).unsqueeze(0)
-    control_tensor = einops.rearrange(control_tensor, 'b h w c -> b c h w').clone()
-    
-    # Coordinates for cropping the content from the generated (target_canvas_resolution x target_canvas_resolution) image
-    # (x_start, y_start, x_end, y_end)
-    crop_box_on_canvas = (pad_x, pad_y, paste_end_x, paste_end_y)
-    
-    # The actual dimensions of the content pasted onto the canvas
-    final_content_dims = (content_w, content_h)
-
-    return control_tensor, crop_box_on_canvas, final_content_dims
+    full_canvas = (
+        0,
+        0,
+        target_canvas_resolution,
+        target_canvas_resolution,
+    )
+    return control_tensor, full_canvas, (original_w, original_h)
 
 def ddp_worker(rank, world_size, args, actual_gpu_ids):
     """DDP worker function, executed by each GPU process."""
@@ -176,6 +139,7 @@ def ddp_worker(rank, world_size, args, actual_gpu_ids):
         batch_controls = []
         batch_prompts = []
         batch_crop_boxes = []
+        batch_output_sizes = []
         batch_base_names = []
         batch_exts = []
 
@@ -238,6 +202,7 @@ def ddp_worker(rank, world_size, args, actual_gpu_ids):
             batch_controls.append(control_image_tensor)
             batch_prompts.append(current_prompt)
             batch_crop_boxes.append(crop_box)
+            batch_output_sizes.append(content_dims)
             batch_base_names.append(base_name)
             batch_exts.append(ext)
             if rank == 0 and batch_idx == 0:
@@ -333,12 +298,16 @@ def ddp_worker(rank, world_size, args, actual_gpu_ids):
             base_name = batch_base_names[i]
             ext = batch_exts[i]
             x_start, y_start, x_end, y_end = batch_crop_boxes[i]
+            output_size = batch_output_sizes[i]
             
             for sample_idx in range(args.num_samples):
                 result_idx = i * args.num_samples + sample_idx
                 generated_image_on_canvas_np = x_samples[result_idx]
                 cropped_output_content_np = generated_image_on_canvas_np[y_start:y_end, x_start:x_end, :]
-                output_image_pil = Image.fromarray(cropped_output_content_np)
+                restored_output_np = restore_generated_image(
+                    cropped_output_content_np, output_size
+                )
+                output_image_pil = Image.fromarray(restored_output_np)
                 
                 if args.num_samples > 1:
                     output_filename = f"generated_from_{base_name}_sample_{sample_idx}{ext}"
@@ -347,7 +316,7 @@ def ddp_worker(rank, world_size, args, actual_gpu_ids):
 
                 current_output_path = os.path.join(args.output_dir, output_filename)
                 output_image_pil.save(current_output_path)
-                print(f"[Rank {rank}/GPU {actual_gpu_id}] Saved cropped image: {current_output_path} (size: {output_image_pil.size})")
+                print(f"[Rank {rank}/GPU {actual_gpu_id}] Saved restored image: {current_output_path} (size: {output_image_pil.size})")
 
         del x_samples
         if rank == 0 and (args.low_vram or args.enable_sliced_attention):
@@ -413,7 +382,7 @@ def main():
         '--image_resolution', 
         type=int, 
         default=512, 
-        help='Target canvas resolution. The long edge of the input image is scaled to this value, and the content is centered on a square canvas of this size for generation. The final output is cropped from this canvas to match the original aspect ratio.'
+        help='Square resolution used for nearest-neighbor mask stretching. Generated RGB images are resized back to the original dimensions.'
     )
     parser.add_argument(
         '--batch_size',

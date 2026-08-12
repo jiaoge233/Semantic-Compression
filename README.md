@@ -72,7 +72,7 @@ Next, use the generated control signals (segmentation maps and prompts) to recon
 ```bash
 python process_decoding.py \
     --config_path [PATH_TO_YOUR_CONFIG.yaml] \
-    --checkpoint_path [PATH_TO_YOUR_TRAINED_MODEL.ckpt] \
+    --decoder_model_path [PATH_TO_YOUR_TRAINED_MODEL.ckpt] \
     --input_path [PATH_TO_FOLDER_WITH_CONTROL_IMAGES] \
     --output_dir [PATH_TO_SAVE_GENERATED_IMAGES] \
     --prompt_json_path [OPTIONAL_PATH_TO_PROMPT.json] \
@@ -95,9 +95,57 @@ To evaluate the model's performance with standard metrics, use `evaluate.py`:
 
 ```bash
 python evaluate.py \
-    --prediction_path ./generated_images \
-    --ground_truth_path ./data/original_images/val
+    ./generated_images \
+    ./data/original_images/val \
+    --output-dir ./evaluation/generated
 ```
+
+LPIPS is evaluated with AlexNet using the standard `[-1, 1]` input range. To
+recalculate LPIPS from existing images for several methods without retraining or
+generating images, run:
+
+```bash
+python recalculate_lpips.py \
+    --original-dir ./data/original_images/val \
+    --method semantic=./generated_images \
+    --method jpeg=./compressed_images/val/jpeg \
+    --method webp=./compressed_images/val/webp \
+    --output-dir ./evaluation/lpips_fixed \
+    --previous-summary ./evaluation/lpips_old.csv
+```
+
+`--previous-summary` is optional and must contain `method` and
+`average_lpips` columns. The command writes per-image CSV files,
+`lpips_summary.csv`, and `lpips_ranking.md`. LPIPS is lower-is-better; the
+Markdown report states whether the relative order of methods changed.
+
+## Segmentation Mask Preprocessing
+
+Segmentation maps are discrete category maps. Both training and inference
+therefore use nearest-neighbor interpolation and stretch masks to the configured
+square resolution. This matches the geometry used to train the published
+checkpoint. Generated RGB images are resized back to the input mask dimensions
+with continuous-image interpolation.
+
+Before a larger experiment, compare the legacy and corrected mask processing on
+a small subset:
+
+```bash
+python compare_mask_preprocessing.py \
+    ./data/segmented_images/val_subset \
+    --resolution 512 \
+    --output ./evaluation/mask_resize_comparison.csv
+```
+
+For a reconstruction A/B test, use the same 5-10 masks, prompts, checkpoint,
+sampling parameters, and fixed `--seed 42` in the old and corrected revisions.
+Evaluate both output directories with `recalculate_lpips.py` (and
+`evaluate.py` for PSNR/SSIM). If nearest-neighbor materially changes mask
+boundaries and consistently improves reconstruction metrics, retrain because
+the old checkpoint was trained with area-interpolated masks. If the difference
+is negligible, retain the checkpoint and regenerate only the published test
+results. A change limited to evaluation requires neither retraining nor image
+generation.
 
 ## Pre-trained Models
 

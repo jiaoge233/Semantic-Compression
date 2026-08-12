@@ -15,6 +15,7 @@ import imquality.brisque as brisque
 import torch.nn as nn
 import torchvision.models as models
 import torch.nn.functional as F
+from lpips_utils import calculate_lpips_distance
 
 def preprocess_images(source_dir, dest_dir, size):
     """
@@ -51,11 +52,17 @@ def get_image_map(directory):
     return image_map
 
 def main(args):
+    os.makedirs(args.output_dir, exist_ok=True)
+
     # Create temporary directories for resized images
-    temp_dir1 = "temp_resized_dir1_for_metrics"
-    temp_dir2 = "temp_resized_dir2_for_metrics"
+    temp_dir1 = os.path.join(args.output_dir, "temp_resized_dir1_for_metrics")
+    temp_dir2 = os.path.join(args.output_dir, "temp_resized_dir2_for_metrics")
 
     try:
+        for temp_dir in (temp_dir1, temp_dir2):
+            if os.path.exists(temp_dir):
+                shutil.rmtree(temp_dir)
+
         # Preprocess both directories to a standard size
         preprocess_images(args.dir1, temp_dir1, args.image_size)
         preprocess_images(args.dir2, temp_dir2, args.image_size)
@@ -84,8 +91,8 @@ def main(args):
 
         # --- LPIPS Calculation ---
         print("Calculating LPIPS...")
-        lpips_per_pair_file = 'lpips_per_pair.csv'
-        summary_file = 'summary_metrics.csv'
+        lpips_per_pair_file = os.path.join(args.output_dir, 'lpips_per_pair.csv')
+        summary_file = os.path.join(args.output_dir, 'summary_metrics.csv')
 
         loss_fn_alex = lpips.LPIPS(net='alex')
         if torch.cuda.device_count() > 1:
@@ -124,11 +131,11 @@ def main(args):
                     img2_np = np.array(img2)
                     
                     # LPIPS
-                    transform_tensor = transforms.ToTensor()
-                    img1_tensor = transform_tensor(img1).to(device).unsqueeze(0)
-                    img2_tensor = transform_tensor(img2).to(device).unsqueeze(0)
-                    with torch.no_grad():
-                        lpips_dist = loss_fn_alex(img1_tensor, img2_tensor).item()
+                    # LPIPS expects [-1, 1]. The helper passes [0, 1] tensors
+                    # with normalize=True so lpips performs the standard mapping.
+                    lpips_dist = calculate_lpips_distance(
+                        loss_fn_alex, img1, img2, device
+                    )
                     
                     # SSIM
                     ssim_value = structural_similarity(img1_np, img2_np, channel_axis=-1, data_range=255)
@@ -186,7 +193,7 @@ def main(args):
             
         # --- BRISQUE Calculation for dir1 ---
         print("\nCalculating BRISQUE for dir1...")
-        brisque_file = 'brisque_scores_dir1.csv'
+        brisque_file = os.path.join(args.output_dir, 'brisque_scores_dir1.csv')
         brisque_scores = []
         avg_brisque = 0
 
@@ -274,5 +281,6 @@ if __name__ == "__main__":
     parser.add_argument('dir2', type=str, help='Path to the second image directory.')
     parser.add_argument('--image-size', type=int, default=256, help='The size to resize all images to for calculation.')
     parser.add_argument('--gpu', type=str, default='0', help='GPU(s) to use, e.g., "0" or "0,1"')
+    parser.add_argument('--output-dir', type=str, default='.', help='Directory for CSV outputs and temporary metric images.')
     args = parser.parse_args()
     main(args) 

@@ -4,6 +4,10 @@ import cv2
 import numpy as np
 from torch.utils.data import Dataset
 from PIL import Image 
+from segmentation_preprocessing import (
+    normalize_control_array,
+    resize_semantic_mask,
+)
 
 class MyControlNetDataset(Dataset):
     def __init__(self, json_file_path, image_resolution=512):
@@ -63,7 +67,9 @@ class MyControlNetDataset(Dataset):
         # You need to adjust this part according to your sketch data and the requirements of the Scribble model.
         # The following is a general processing method, assuming the sketch is also RGB (if not, you need to adjust .convert())
         source_image_np = np.array(source_image_pil).astype(np.uint8)
-        source_image_resized = cv2.resize(source_image_np, (self.image_resolution, self.image_resolution), interpolation=cv2.INTER_AREA)
+        source_image_resized = resize_semantic_mask(
+            source_image_np, self.image_resolution
+        )
         
         # For Scribble-type control, the input is usually a single-channel binarized image or grayscale image.
         # If your sketch is colored, you may need to convert it to grayscale first.
@@ -74,7 +80,7 @@ class MyControlNetDataset(Dataset):
         if source_image_resized.ndim == 2: # If it's a grayscale image
             source_image_resized = cv2.cvtColor(source_image_resized, cv2.COLOR_GRAY2RGB) # Convert to 3 channels
         
-        source_image_normalized = (source_image_resized.astype(np.float32) / 127.5) - 1.0 # Normalize to [-1, 1]
+        source_image_normalized = normalize_control_array(source_image_resized)
         # Or for a single-channel control map in [0,1]:
         # source_image_gray = cv2.cvtColor(source_image_resized, cv2.COLOR_RGB2GRAY)
         # source_image_normalized = source_image_gray.astype(np.float32) / 255.0
